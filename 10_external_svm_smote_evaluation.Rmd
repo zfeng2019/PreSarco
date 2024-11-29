@@ -1,0 +1,96 @@
+---
+title: "10_external_svm_smote_evaluation"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Training and Evaluation on External Data}
+# Load and set up external training data with SMOTE for balancing
+externalTrain <- data11_16[,c( -1)]
+set.seed(seed)
+externalTrain$SO <- as.factor(externalTrain$SO)  # Convert target variable to factor
+print(table(externalTrain$SO))
+
+# Prepare features and target for SMOTE, converting factors to numeric where necessary
+features <- externalTrain[, -which(names(externalTrain) == "SO")]
+target <- externalTrain$SO
+features_numeric <- data.frame(lapply(features, function(x) if (is.factor(x)) as.numeric(as.factor(x)) else x))
+
+# Apply SMOTE for oversampling the minority class
+smote_result <- smotefamily::SMOTE(features_numeric, target, K = 20, dup_size = 2)
+smote_data <- smote_result$data
+colnames(smote_data)[which(colnames(smote_data) == "class")] <- "SO"  # Rename SMOTE class column to "SO"
+
+# Reorder columns to ensure "SO" is the first column
+smote_data <- smote_data[, c("SO", setdiff(names(smote_data), "SO"))]
+
+# Convert specified columns to factors with rounded values
+smote_factor <- c(5:12)
+smote_data[, smote_factor] <- lapply(smote_data[, smote_factor], function(x) as.factor(round(as.numeric(x))))
+
+# Additional categorical adjustments for specific columns in SMOTE data
+smote_data$SO <- as.factor(smote_data$SO)
+smote_data$Sex <- as.factor(as.numeric(smote_data$Sex))
+smote_data$HEI_Score <- as.factor(as.numeric(smote_data$HEI_Score) - 1)
+smote_data$PA_Score <- as.factor(as.numeric(smote_data$PA_Score) - 1)
+smote_data$Smoke_Score <- as.factor(as.numeric(smote_data$Smoke_Score) - 1)
+smote_data$Sleep_Score <- as.factor(as.numeric(smote_data$Sleep_Score) - 1)
+smote_data$Non.hdl_Score <- as.factor(as.numeric(smote_data$Non.hdl_Score) - 1)
+smote_data$Glucose_Score <- as.factor(as.numeric(smote_data$Glucose_Score) - 1)
+smote_data$BP_Score <- as.factor(as.numeric(smote_data$BP_Score) - 1)
+
+# Replace the resampled instances of class 0 with original instances
+smote_data_SO1_indices <- which(smote_data$SO == 0)
+original_data_SO1_indices <- which(externalTrain$SO == 0)
+smote_data[smote_data_SO1_indices, ] <- externalTrain[original_data_SO1_indices, ]
+print(table(smote_data$SO))  # Check class balance
+
+# Shuffle SMOTE-processed data for training
+externalTrain <- smote_data
+set.seed(seed)
+shuffled_ordinatrainData <- externalTrain[sample(nrow(externalTrain)), ]
+externalTrain <- shuffled_ordinatrainData
+
+# Train SVM model on the balanced data
+set.seed(seed)
+externalSVM <- svm(SO ~ ., data = externalTrain, probability = TRUE)
+
+# Make predictions on test data using the trained SVM model
+externaltest_pred <- attr(predict(externalSVM, externaltestData, probability = TRUE), "probabilities")[, "1"]
+
+# Calculate optimal cutoff based on Youden's index and create confusion matrix
+cutoffs <- seq(0, 1, by = 0.005)
+metrics <- t(sapply(cutoffs, calculate_sens_spec1, true_labels = as.factor(externaltestData$SO), predicted_probs = externaltest_pred))
+best_cutoff_index <- which.max(metrics[, 3])
+best_cutoff_svm <- cutoffs[best_cutoff_index]
+best_youden_index_svm <- metrics[best_cutoff_index, 3]
+
+# Generate predicted labels using optimal cutoff
+predicted_labels <- ifelse(externaltest_pred > best_cutoff_svm, "1", "0")
+confusion_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(externaltestData$SO), dnn = c("Predicted", "Actual"), positive = "1")
+
+# Compute model performance metrics
+accuracy <- confusion_matrix$overall["Accuracy"]
+precision <- confusion_matrix$byClass["Pos Pred Value"]
+recall <- confusion_matrix$byClass["Sensitivity"]
+f1_score <- confusion_matrix$byClass["F1"]
+
+# Calculate AUC, confidence interval, and Brier score
+roc_obj <- roc(response = externaltestData$SO, predictor = externaltest_pred)
+auc_value <- auc(roc_obj)
+ci <- ci.auc(roc_obj, conf.level = 0.95)
+brier_score <- mean((externaltest_pred - as.numeric(externaltestData$SO))^2)
+
+# Output results
+print(brier_score)
+print(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+print(paste("Precision:", precision))
+print(paste("Recall:", recall))
+print(paste("F1 Score:", f1_score))
+print(paste("AUC:", auc_value))
+print(paste("AUC:", round(auc_value, 3), "(", round(ci[1], 4), "-", round(ci[3], 4), ")", sep = ""))
+print(paste("Brier Score:", brier_score))
+
+```

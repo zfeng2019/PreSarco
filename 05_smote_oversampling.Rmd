@@ -1,0 +1,90 @@
+---
+title: "05_smote_oversampling"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r SMOTE oversampling}
+# Load necessary libraries
+set.seed(seed)  # Set seed for reproducibility
+
+# Prepare training data for SMOTE
+ordinatrainData$SO <- as.factor(ordinatrainData$SO)  # Convert target variable to factor
+print(table(ordinatrainData$SO))  # Print class distribution
+features <- ordinatrainData[, -which(names(ordinatrainData) == "SO")]  # Separate features
+target <- ordinatrainData$SO  # Target variable
+features_numeric <- data.frame(lapply(features, function(x) if (is.factor(x)) as.numeric(as.factor(x)) else x))  # Convert factors to numeric for SMOTE
+
+# Apply SMOTE to generate synthetic samples
+smote_result <- smotefamily::SMOTE(features_numeric, target, K = 20, dup_size = 2)
+smote_data <- smote_result$data  # Retrieve SMOTE data
+colnames(smote_data)[which(colnames(smote_data) == "class")] <- "SO"  # Rename target column
+smote_data <- smote_data[, c("SO", setdiff(names(smote_data), "SO"))]  # Reorder columns
+
+# Convert specified columns back to factor for training data
+smote_factor <- c(5:12)
+smote_data[, smote_factor] <- lapply(smote_data[, smote_factor], function(x) as.factor(round(as.numeric(x))))
+smote_data$SO <- as.factor(smote_data$SO)  # Ensure SO column is factor
+smote_data$Sex <- as.factor(as.numeric(smote_data$Sex))  # Recode categorical variables for analysis
+smote_data$HEI_Score <- as.factor(as.numeric(smote_data$HEI_Score) - 1)
+smote_data$PA_Score <- as.factor(as.numeric(smote_data$PA_Score) - 1)
+smote_data$Smoke_Score <- as.factor(as.numeric(smote_data$Smoke_Score) - 1)
+smote_data$Sleep_Score <- as.factor(as.numeric(smote_data$Sleep_Score) - 1)
+smote_data$Non.hdl_Score <- as.factor(as.numeric(smote_data$Non.hdl_Score) - 1)
+smote_data$Glucose_Score <- as.factor(as.numeric(smote_data$Glucose_Score) - 1)
+smote_data$BP_Score <- as.factor(as.numeric(smote_data$BP_Score) - 1)
+
+# Retain original observations with SO = 0 (majority class)
+smote_data_SO1_indices <- which(smote_data$SO == 0)
+original_data_SO1_indices <- which(ordinatrainData$SO == 0)
+smote_data[smote_data_SO1_indices, ] <- ordinatrainData[original_data_SO1_indices, ]
+print(table(smote_data$SO))  # Print class distribution after SMOTE
+ordinatrainData <- smote_data  # Update training data with SMOTE results
+set.seed(seed)
+shuffled_ordinatrainData <- ordinatrainData[sample(nrow(ordinatrainData)), ]  # Shuffle training data
+ordinatrainData <- shuffled_ordinatrainData
+
+# Prepare test data with similar steps as training data
+ordinatestData$SO <- as.factor(ordinatestData$SO)  # Convert target variable to factor
+print(table(ordinatestData$SO))  # Print class distribution
+features <- ordinatestData[, -which(names(ordinatestData) == "SO")]  # Separate features
+target <- ordinatestData$SO  # Target variable
+features_numeric <- data.frame(lapply(features, function(x) if (is.factor(x)) as.numeric(as.factor(x)) else x))  # Convert factors to numeric for SMOTE
+
+# Apply SMOTE to generate synthetic samples for test data
+smote_result <- smotefamily::SMOTE(features_numeric, target, K = 20, dup_size = 2)
+smote_data <- smote_result$data  # Retrieve SMOTE data
+colnames(smote_data)[which(colnames(smote_data) == "class")] <- "SO"  # Rename target column
+smote_data <- smote_data[, c("SO", setdiff(names(smote_data), "SO"))]  # Reorder columns
+
+# Convert specified columns back to factor for test data
+smote_factor <- c(5:12)
+smote_data[, smote_factor] <- lapply(smote_data[, smote_factor], function(x) as.factor(round(as.numeric(x))))
+smote_data$SO <- as.factor(smote_data$SO)  # Ensure SO column is factor
+smote_data$Sex <- as.factor(as.numeric(smote_data$Sex))  # Recode categorical variables for analysis
+smote_data$HEI_Score <- as.factor(as.numeric(smote_data$HEI_Score) - 1)
+smote_data$PA_Score <- as.factor(as.numeric(smote_data$PA_Score) - 1)
+smote_data$Smoke_Score <- as.factor(as.numeric(smote_data$Smoke_Score) - 1)
+smote_data$Sleep_Score <- as.factor(as.numeric(smote_data$Sleep_Score) - 1)
+smote_data$Non.hdl_Score <- as.factor(as.numeric(smote_data$Non.hdl_Score) - 1)
+smote_data$Glucose_Score <- as.factor(as.numeric(smote_data$Glucose_Score) - 1)
+smote_data$BP_Score <- as.factor(as.numeric(smote_data$BP_Score) - 1)
+
+# Retain original observations with SO = 0 (majority class) in test data
+smote_data_SO1_indices <- which(smote_data$SO == 0)
+original_data_SO1_indices <- which(ordinatestData$SO == 0)
+smote_data[smote_data_SO1_indices, ] <- ordinatestData[original_data_SO1_indices, ]
+print(table(smote_data$SO))  # Print class distribution after SMOTE
+ordinatestData <- smote_data  # Update test data with SMOTE results
+set.seed(seed)
+shuffled_ordinatrainData <- ordinatestData[sample(nrow(ordinatestData)), ]  # Shuffle test data
+ordinatestData <- shuffled_ordinatrainData
+
+# Convert specified columns to factors in both training and test datasets
+factor_feature <- c(5:12)
+ordinatrainData[, factor_feature] <- lapply(ordinatrainData[, factor_feature], as.factor)
+write.csv(ordinatrainData, file = "Application/smoteddate.csv", row.names = FALSE)  # Save training data
+ordinatestData[, factor_feature] <- lapply(ordinatestData[, factor_feature], as.factor)  # Convert for test data
+
+```

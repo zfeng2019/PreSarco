@@ -1,0 +1,63 @@
+---
+title: "01_load_libraries"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Load required libraries}
+# Load required libraries
+library(nhanesA)       # Access NHANES data for health and nutrition studies
+library(tidyverse)     # Comprehensive data manipulation and visualization
+library(dplyr)         # Data manipulation functions
+library(plyr)          # Additional data manipulation tools
+library(knitr)         # Dynamic report generation
+library(foreign)       # Import/export data from other formats
+library(survey)        # Analyze survey data
+library(openxlsx)      # Reading and writing Excel files
+library(reshape2)      # Data reshaping
+library(do)            # Enable foreach support for parallel processing
+library(caret)         # Model training and evaluation
+library(skimr)         # Examine data distribution and summaries
+library(moments)       # Compute statistical moments
+library(ggplot2)       # Data visualization
+library(tidyr)         # Data tidying
+library(randomForest)  # Random Forest modeling
+library(PRROC)         # Precision-Recall and ROC curves
+library(e1071)         # Miscellaneous ML functions, including SVM
+library(adabag)        # Boosting and bagging algorithms
+library(kknn)          # K-Nearest Neighbors algorithm
+library(xgboost)       # Extreme Gradient Boosting
+library(MASS)          # Functions and datasets for statistics
+library(yardstick)     # Model performance metrics
+library(gridExtra)     # Arrange multiple grid-based plots
+library(pROC)          # ROC curve analysis
+library(class)         # Various statistical and classification functions
+library(ggpubr)        # Publication-ready ggplot2 themes
+library(ggprism)       # Enhanced ggplot2 themes
+library(glmnet)        # Elastic Net and regularized regression
+library(FSelector)     # Feature selection methods
+library(purrr)         # Functional programming tools
+library(lightgbm)      # LightGBM gradient boosting
+library(smotefamily)   # SMOTE for handling imbalanced data
+library(rBayesianOptimization) # Bayesian Optimization
+library(boot)          # Bootstrap functions
+library(outliers)      # Detection of outliers
+library(ROSE)          # Oversampling techniques for imbalanced data
+library(car)           # Companion to Applied Regression
+library(Hmisc)         # Harrell Miscellaneous for data analysis
+library(catboost)      # CatBoost gradient boosting
+library(tableone)  # For creating summary tables
+library(survey)    # For analyzing survey data with weights
+library(shapviz)
+library(lime)
+library("smotefamily")  # For SMOTE oversampling
+library(RSBID)
+library(ROSE)
+library(FNN)
+
+seed <- 2040
+# Set display precision for numeric outputs
+options(digits = 4)
+```
+

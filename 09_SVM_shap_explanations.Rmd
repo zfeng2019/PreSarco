@@ -1,0 +1,64 @@
+---
+title: "09_svm_shap_explanations"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Train SVM and Generate SHAP Explanations}
+# Set up and load data for training and testing SVM model with SHAP analysis
+dataclass <- "All"
+set.seed(seed)
+data <- get_data(dataclass)  # Retrieve dataset for specified dataclass
+train_data2 <- data$trainData  # Extract training data
+
+# Load test data without SMOTE applied
+test_data <- shaptestdate_scale
+
+# Convert target variable to factor in training data
+train_data2$SO <- as.factor(train_data2$SO)
+
+# Save preprocessed training and test data to CSV files for later use
+write.csv(train_data2, file = "./Application/trainData.csv", row.names = FALSE)
+test_data2 <- test_data
+test_data2$SO <- as.factor(test_data2$SO)
+write.csv(test_data2, file = "./Application/testData.csv", row.names = FALSE)
+
+# Train an SVM model on the training data
+wine_svm <- svm(SO ~ ., data = train_data2, probability = TRUE)
+
+# Define the training and testing folds for SHAP explanation
+training_fold <- train_data2
+testing_fold <- test_data2[,-length(test_data2)]  # Exclude the response column for testing
+
+fit <- wine_svm  # Set the trained model as the fit variable for SHAP explanation
+
+# Define prediction function for SHAP that returns probabilities of positive class
+pred <- function(model, newdata) {
+  attr(predict(model, newdata, probability = TRUE), "probabilities")[, "1"]
+}
+
+# Calculate SHAP values using fastshap package
+shap_values_svm <- fastshap::explain(
+    fit,
+    X = training_fold,
+    feature_names = colnames(training_fold)[colnames(training_fold) != "SO"],
+    pred_wrapper = pred,
+    nsim = 100,
+    newdata = testing_fold
+  )
+
+# Calculate average SHAP values for each feature and save results to CSV
+average_shap_values <- colMeans(abs(shap_values_svm))
+write.csv(shap_values_svm, file = "./Application/shap_rf.csv", row.names = FALSE)
+
+average_shap_values_df <- data.frame(Feature = names(average_shap_values), Average_SHAP_Value = average_shap_values)
+write.csv(average_shap_values_df, file = "./Application/AVG_shap_svm.csv", row.names = FALSE)
+
+# Identify the sample for specific SHAP visualization (e.g., index 70 in shaptestdate_scale)
+normal <- shaptestdate_scale$index == 70  # Set specific index for case analysis
+
+# Visualize SHAP values using shapviz (data here only for display purposes)
+shp_svm <- shapviz(shap_values_svm, X = shaptestdate[,-length(test_data2)], interactions = TRUE)
+
+```

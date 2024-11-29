@@ -1,0 +1,328 @@
+---
+title: "06_model_run"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Data null all deleted}
+# Load NHANES 2017-2018 demographic data
+data2017_18 <- read.xport("demographic_raw_data/DEMO_J2017_2018.XPT")
+# Find the maximum and minimum SEQN (unique identifier) values for 2017-2018
+max_seqn <- max(data2017_18$SEQN)
+min_seqn <- min(data2017_18$SEQN)
+
+# Load additional data files
+le8 <- read.csv("Data_Required_for_Model/le81.csv")                    # Load le8 data
+data <- read.csv("Data_Required_for_Model/Demographic.csv")            # Load demographic data
+# Merge demographic data with le8factors, retaining all rows in demographic data
+merged_data <- merge(data, le8, by = "SEQN", all.x = TRUE)
+
+# Filter rows for the 2017-2018 cohort based on SEQN range and separate data for other years
+data_2017_2018 <- merged_data[merged_data$SEQN >= min_seqn & merged_data$SEQN <= max_seqn, ]
+merged_data <- merged_data[!(merged_data$SEQN >= min_seqn & merged_data$SEQN <= max_seqn), ]
+
+# > nrow(merged_data)
+# [1] 28695
+# > nrow(data_2017_2018)
+# [1] 8704
+
+# merged_data22 <- merged_data22[!(merged_data22$RACE %in% c(6, 1, 4, 2, 7)), ]
+
+```
+
+```{r NHANES Data Processing and Scaling for Health Scores }
+# merged_data <- rbind(merged_data, InterVeriDate)
+
+# Extract SO column and remove unwanted columns from both datasets, then reattach SO column
+SO_column <- merged_data$SO
+merged_data <- merged_data[, !(names(merged_data) %in% c("SO", "Armgirth", "Weight", "BMI_Score", "MARITAL", "DBP", "LE8", "Waistline", "PIR", "Edu_level", "Hypertension", "Diabetes"))]
+merged_data <- cbind(SO = SO_column, merged_data)
+
+SO_column <- data_2017_2018$SO
+data_2017_2018 <- data_2017_2018[, !(names(data_2017_2018) %in% c("SO", "Armgirth", "Weight", "BMI_Score", "MARITAL", "DBP", "LE8", "Waistline", "PIR", "Edu_level", "Hypertension", "Diabetes"))]
+data_2017_2018 <- cbind(SO = SO_column, data_2017_2018)
+
+# Remove rows with missing values and display row counts before and after for merged_data
+original_rows <- nrow(merged_data)
+cat("Original row count: ", original_rows, "\n")
+merged_data <- na.omit(merged_data)
+deleted_rows <- original_rows - nrow(merged_data)
+cat("Deleted rows: ", deleted_rows, "\n")
+remaining_rows <- nrow(merged_data)
+cat("Remaining rows: ", remaining_rows, "\n")
+
+# Remove rows with missing values and display row counts before and after for data_2017_2018
+original_rows <- nrow(data_2017_2018)
+cat("Original row count: ", original_rows, "\n")
+data_2017_2018 <- na.omit(data_2017_2018)
+deleted_rows <- original_rows - nrow(data_2017_2018)
+cat("Deleted rows: ", deleted_rows, "\n")
+remaining_rows <- nrow(data_2017_2018)
+cat("Remaining rows: ", remaining_rows, "\n")
+
+# Filter merged_data by excluding specific RACE values and remove RACE column
+merged_data <- merged_data[!(merged_data$RACE %in% c(6, 1, 4, 2, 7)), ]
+merged_data <- merged_data[, -which(names(merged_data) == "RACE")]
+write.csv(merged_data, file = "Model_run_result/data_11-16.csv", row.names = FALSE)
+
+# Filter data_2017_2018 by excluding specific RACE values and remove RACE column
+data_2017_2018 <- data_2017_2018[!(data_2017_2018$RACE %in% c(6, 1, 4, 2, 7)), ]
+data_2017_2018 <- data_2017_2018[, -which(names(data_2017_2018) == "RACE")]
+write.csv(data_2017_2018, file = "Model_run_result/data_17-18.csv", row.names = FALSE)
+
+# Define columns of interest for score conversion and analysis
+columns_of_interest <- c("HEI_Score", "PA_Score", "Smoke_Score", "Sleep_Score", "BMI_Score", "Non.hdl_Score", "Glucose_Score", "BP_Score")
+
+# Print frequency tables for specified columns in merged_data
+result_list <- lapply(columns_of_interest, function(col) {
+  table(merged_data[[col]])
+})
+names(result_list) <- columns_of_interest
+result_list
+
+# Convert HEI_Score to a 0-4 scale
+convert_to_scale <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 25 ~ 1,
+    x == 50 ~ 2,
+    x == 80 ~ 3,
+    x == 100 ~ 4,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(HEI_Score = convert_to_scale(HEI_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(HEI_Score = convert_to_scale(HEI_Score))
+
+# Convert PA_Score to a 0-6 scale
+convert_to_scale1 <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 20 ~ 1,
+    x == 40 ~ 2,
+    x == 60 ~ 3,
+    x == 80 ~ 4,
+    x == 90 ~ 5,
+    x == 100 ~ 6,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(PA_Score = convert_to_scale1(PA_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(PA_Score = convert_to_scale1(PA_Score))
+
+# Convert Smoke_Score to a 0-8 scale
+convert_to_scale2 <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 5 ~ 1,
+    x == 25 ~ 2,
+    x == 30 ~ 3,
+    x == 50 ~ 4,
+    x == 55 ~ 5,
+    x == 75 ~ 6,
+    x == 80 ~ 7,
+    x == 100 ~ 8,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(Smoke_Score = convert_to_scale2(Smoke_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(Smoke_Score = convert_to_scale2(Smoke_Score))
+
+# Convert Sleep_Score to a 0-5 scale
+convert_to_scale3 <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 20 ~ 1,
+    x == 40 ~ 2,
+    x == 70 ~ 3,
+    x == 90 ~ 4,
+    x == 100 ~ 5,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(Sleep_Score = convert_to_scale3(Sleep_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(Sleep_Score = convert_to_scale3(Sleep_Score))
+
+# Convert Non.hdl_Score to a 0-5 scale
+convert_to_scale5 <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 20 ~ 1,
+    x == 40 ~ 2,
+    x == 60 ~ 3,
+    x == 80 ~ 4,
+    x == 100 ~ 5,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(Non.hdl_Score = convert_to_scale5(Non.hdl_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(Non.hdl_Score = convert_to_scale5(Non.hdl_Score))
+
+# Convert Glucose_Score to a 0-6 scale
+convert_to_scale6 <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 10 ~ 1,
+    x == 20 ~ 2,
+    x == 30 ~ 3,
+    x == 40 ~ 4,
+    x == 60 ~ 5,
+    x == 100 ~ 6,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(Glucose_Score = convert_to_scale6(Glucose_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(Glucose_Score = convert_to_scale6(Glucose_Score))
+
+# Convert BP_Score to a 0-8 scale
+convert_to_scale7 <- function(x) {
+  case_when(
+    x == 0 ~ 0,
+    x == 5 ~ 1,
+    x == 25 ~ 2,
+    x == 30 ~ 3,
+    x == 50 ~ 4,
+    x == 55 ~ 5,
+    x == 75 ~ 6,
+    x == 80 ~ 7,
+    x == 100 ~ 8,
+    TRUE ~ NA_real_
+  )
+}
+merged_data <- merged_data %>%
+  mutate(BP_Score = convert_to_scale7(BP_Score))
+data_2017_2018 <- data_2017_2018 %>%
+  mutate(BP_Score = convert_to_scale7(BP_Score))
+
+# Save cleaned datasets for 2011-2016 and 2017-2018
+write.csv(merged_data, file = "Model_run_result/data_11-16.csv", row.names = FALSE)
+write.csv(data_2017_2018, file = "Model_run_result/data_17-18.csv", row.names = FALSE)
+
+# Generate frequency tables for scores in specified columns
+result_list <- lapply(columns_of_interest, function(col) {
+  table(merged_data[[col]])
+})
+names(result_list) <- columns_of_interest
+result_list
+
+```
+
+```{r Data Preparation, Scaling, and Partitioning for Training and Testing Models}
+# Set seed for reproducibility
+set.seed(seed)
+
+# Load datasets for years 2011-2016 and 2017-2018
+data11_16 <- read.csv("Model_run_result/data_11-16.csv")
+data17_18 <- read.csv("Model_run_result/data_17-18.csv")
+
+# Define column groups: basic characteristics and health scores
+people_names <- c("BMI", "Height", "Age", "Sex")
+eat_names <- c("HEI_Score", "PA_Score", "Smoke_Score", "Sleep_Score", "Non.hdl_Score", "Glucose_Score", "BP_Score")
+all_names <- c("SEQN","SO", people_names, eat_names)
+
+# Select relevant columns for both datasets
+data11_16 <- data11_16[, all_names]
+data17_18 <- data17_18[, all_names]
+
+# Convert specified columns to factors
+columns_to_factor <- c(6:length(data11_16))
+data11_16[, columns_to_factor] <- lapply(data11_16[, columns_to_factor], as.factor)
+data17_18[, columns_to_factor] <- lapply(data17_18[, columns_to_factor], as.factor)
+
+# Assign preprocessed datasets for later SHAP analysis
+shapdate <- data11_16
+exteruse <- data17_18
+
+# Scale numeric columns for both datasets
+columns_to_scale <- c(3:5)
+data11_16[, columns_to_scale] <- scale(data11_16[, columns_to_scale], center = TRUE, scale = TRUE)
+data17_18[, columns_to_scale] <- scale(data17_18[, columns_to_scale], center = TRUE, scale = TRUE)
+
+# Assign scaled datasets for SHAP analysis
+shapdate_scale <- data11_16
+exteruse_scale <- data17_18
+data17_18 <- data17_18[, !names(data17_18) %in% "SEQN"]
+exteruse_scale <- exteruse_scale[, !names(exteruse_scale) %in% "SEQN"]
+
+# Partition data11_16 into training and testing sets (70% training, 30% testing)
+set.seed(seed)
+
+# trainIndex <- createDataPartition(data11_16$SO, p = 0.7, list = FALSE)
+# ordinatrainData <- data11_16[trainIndex, ]
+# ordinatestData <- data11_16[-trainIndex, ]
+# seqn_data <- ordinatestData$SEQN
+# write.csv(seqn_data, file = "Data_Required_for_Model/InterVeriDateSEQN.csv", row.names = FALSE)
+
+seqn_data<-read.csv("Data_Required_for_Model/InterVeriDateSEQN.csv")
+seqn_data<-seqn_data$SEQN
+ordinatestData <- data11_16[data11_16$SEQN %in% seqn_data, ]
+
+
+ordinatrainData <- data11_16[!(data11_16$SEQN %in% seqn_data), ]
+ordinatestData <- ordinatestData[, !names(ordinatestData) %in% "SEQN"]
+ordinatrainData <- ordinatrainData[, !names(ordinatrainData) %in% "SEQN"]
+# write.csv(ordinatestData,file = "outliers/ordinatestData.csv",row.names = FALSE)
+# Split SHAP datasets into training and testing
+shaptraindate <- shapdate[!(shapdate$SEQN %in% seqn_data), ]
+shaptraindate <- shaptraindate[, !names(shaptraindate) %in% "SEQN"]
+shaptestdate <- shapdate[shapdate$SEQN %in% seqn_data, ]
+shaptestdate <- shaptestdate[, !names(shaptestdate) %in% "SEQN"]
+shaptestdate$index <- seq.int(nrow(shaptestdate))
+
+# Save the training dataset for SHAP analysis
+write.csv(shaptraindate, file = "./Application/ordinatrainData.csv", row.names = FALSE)
+
+# Create scaled SHAP datasets for training and testing
+shaptraindate_scale <- shapdate_scale[!(shapdate_scale$SEQN %in% seqn_data), ]
+shaptraindate_scale <- shaptraindate_scale[, !names(shaptraindate_scale) %in% "SEQN"]
+shaptestdate_scale <- shapdate_scale[shapdate_scale$SEQN %in% seqn_data, ]
+shaptestdate_scale <- shaptestdate_scale[, !names(shaptestdate_scale) %in% "SEQN"]
+shaptestdate_scale$index <- seq.int(nrow(shaptestdate_scale))
+
+# Add row indices for external test data
+exteruse_scale$index <- seq.int(nrow(exteruse_scale))
+exteruse$index <- seq.int(nrow(exteruse))
+externaltestData <- data17_18
+
+# beforesmote_train<-ordinatrainData
+# beforesmote_validate<-ordinatestData
+# beforesmote_train$flag<-1
+# beforesmote_validate$flag<-1
+# write.csv(beforesmote_train,file = "smote_differ_fb/beforesmote_train.csv")
+# write.csv(beforesmote_validate,file = "smote_differ_fb/beforesmote_validate.csv")
+
+cat(
+  "全删除后的训练集总样本:", nrow(ordinatrainData),
+  " 阳性: ", sum(ordinatrainData$SO == 1),
+  " 阴性: ", sum(ordinatrainData$SO == 0),
+  "\n"
+)
+
+cat(
+  "全删除后的验证集总样本:", nrow(ordinatestData),
+  " 阳性: ", sum(ordinatestData$SO == 1),
+  " 阴性: ", sum(ordinatestData$SO == 0),
+  "\n"
+)
+cat(
+  "全删除后的测试总样本:", nrow(data17_18),
+  " 阳性: ", sum(data17_18$SO == 1),
+  " 阴性: ", sum(data17_18$SO == 0),
+  "\n"
+)
+```
+
+

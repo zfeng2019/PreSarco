@@ -1,0 +1,280 @@
+---
+title: "08_delong_test_auc_comparison"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r DeLong Test for AUC Comparison}
+# Load model prediction data
+data <- read.csv("Model_run_result/model_predictions.csv")
+
+# Extract real labels and predictions for each model
+real <- data$Real
+predictions <- data[, -1]
+
+# Get model names
+model_names <- colnames(predictions)
+
+# Initialize an empty results matrix to store p-values for DeLong tests
+results <- matrix(NA, ncol = length(model_names), nrow = length(model_names))
+colnames(results) <- model_names
+rownames(results) <- model_names
+
+# Compute ROC curves for each model
+rocs <- lapply(model_names, function(model) {
+  roc(real, predictions[[model]])
+})
+
+# Perform pairwise DeLong tests between models
+for (i in 1:length(model_names)) {
+  for (j in 1:length(model_names)) {
+    if (i != j) {
+      test_result <- roc.test(rocs[[i]], rocs[[j]], method = "delong")
+      results[i, j] <- test_result$p.value
+    }
+  }
+}
+
+# Convert the results matrix to a data frame
+results_df <- as.data.frame(results)
+
+# Print and save the DeLong test p-values
+print(results_df)
+write.csv(results_df, "Delong_results/delong_data.csv", row.names = TRUE)
+
+# Function to categorize p-values with significance symbols
+categorize_p_value <- function(p) {
+  if (is.na(p)) {
+    return(NA)
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("n.s.")
+  }
+}
+
+# Apply categorization to the p-value data frame
+results_df1 <- as.data.frame(lapply(results_df, function(column) {
+  sapply(column, categorize_p_value)
+}))
+
+# Save categorized results
+write.csv(results_df1, "Delong_results/delong_test_results.csv", row.names = TRUE)
+
+# Load the significance data and set alpha level
+results <- read.csv("Delong_results/delong_test_results.csv", row.names = 1)
+alpha <- 0.05
+
+# Initialize significance matrix to indicate significant comparisons
+significance_matrix <- matrix(NA, nrow = nrow(results), ncol = ncol(results))
+rownames(significance_matrix) <- rownames(results)
+colnames(significance_matrix) <- colnames(results)
+
+# Populate the significance matrix based on alpha level
+for (i in 1:nrow(results)) {
+  for (j in 1:ncol(results)) {
+    if (is.na(results[i, j])) {
+      significance_matrix[i, j] <- NA
+    } else if (results[i, j] < alpha) {
+      significance_matrix[i, j] <- "Significant"
+    } else {
+      significance_matrix[i, j] <- " "
+    }
+  }
+}
+
+# Convert significance matrix to data frame and save it
+significance_df <- as.data.frame(significance_matrix)
+write.csv(significance_df, "Delong_results/delong_test_significance.csv", row.names = TRUE)
+print(significance_df)
+
+# Calculate AUC for each model
+aucs <- sapply(model_names, function(model) {
+  roc(real, predictions[[model]])$auc
+})
+
+# Display AUC values for each model
+print("AUC values for each model:")
+print(aucs)
+
+# Label the p-value results with model names
+colnames(results) <- model_names
+rownames(results) <- model_names
+
+# Display the DeLong test p-value matrix
+print("DeLong test p-value matrix:")
+print(results)
+
+# Initialize variables to store the best model based on AUC
+best_model <- NULL
+best_auc <- 0
+
+# Identify the best model based on DeLong significance and AUC
+for (i in 1:length(model_names)) {
+  model_name <- model_names[i]
+  model_auc <- aucs[i]
+  significant <- all(results[model_name, -i] < alpha, na.rm = TRUE)  # Check if the model is significantly better than all others
+
+  if (significant && model_auc > best_auc) {
+    best_model <- model_name
+    best_auc <- model_auc
+  }
+}
+
+# If no model is significantly better, choose the model with the highest AUC
+if (is.null(best_model)) {
+  best_model <- model_names[which.max(aucs)]
+  best_auc <- max(aucs)
+}
+
+# Display the best model and its AUC
+cat("Best model:", best_model, "\nAUC:", best_auc, "\n")
+
+```
+
+```{r DeLong Test Comparisons Across Models and Data Classes}
+# Define data classes and models for predictions and AUPRC computation
+dataclass_types <- c("All", "LE8", "Cov")  # Types of data subsets to evaluate
+auprc_results <- list()  # Initialize list to store AUPRC results
+pr_curves <- list()  # Initialize list to store precision-recall curves
+models <- c("RF", "SVM", "XGB")  # Define models to evaluate
+all_predictions <- list()  # Initialize list to store predictions for each model and data type
+
+# Loop through each data class to perform training and prediction
+for (dataclass in dataclass_types) {
+  set.seed(seed)  # Set seed for reproducibility
+  
+  # Load and prepare training and test data for the current data class
+  data <- get_data(dataclass)
+  train_data <- data$trainData
+  test_data <- data$testData
+  X_train <- train_data[, -1]  # Exclude target column for training features
+  y_train <- as.factor(train_data[, 1])  # Set target variable for training
+  X_test <- test_data[, -1]  # Exclude target column for test features
+  y_test <- as.factor(test_data[, 1])  # Set target variable for testing
+
+  ## RF Model (Logistic Regression with Cloglog Link) with weights for imbalanced classes
+  # Calculate class weights based on the distribution of the target variable
+  traindata5 <- data$trainData
+  testdata5 <- data$testData
+  traindata5$SO <- as.factor(traindata5$SO)
+  testdata5$SO <- as.factor(testdata5$SO)
+  class_weights <- table(traindata5$SO)
+  scale_pos_weight <- class_weights[1] / class_weights[2]
+  weights <- ifelse(traindata5$SO == levels(traindata5$SO)[2], scale_pos_weight, 1)
+
+  # Train logistic model with cloglog link and stepwise selection
+  lg_model <- glm(SO ~ ., data = traindata5, family = binomial(link = "cloglog"), weights = weights)
+  best_model <- step(lg_model)  # Stepwise model selection
+  lg_model1 <- glm(formula = best_model$formula, family = binomial(link = "cloglog"), data = traindata5, weights = weights)
+
+  # Make predictions on test data
+  test_predictions_rf <- predict(lg_model1, newdata = testdata5, type = "response")
+  all_predictions[[paste0(dataclass, "_RF")]] <- test_predictions_rf  # Store predictions
+
+  ## SVM Model
+  # Convert target variable to factor and apply unique naming to levels
+  set.seed(seed)  # Set seed for reproducibility
+  train_data2 <- train_data
+  train_data2$SO <- as.factor(train_data2$SO)
+  levels(train_data2$SO) <- make.names(levels(train_data2$SO), unique = TRUE)
+  test_data2 <- test_data
+  test_data2$SO <- as.factor(test_data2$SO)
+  levels(test_data2$SO) <- make.names(levels(test_data2$SO), unique = TRUE)
+
+  # Train SVM model with probability output
+  wine_svm <- svm(SO ~ ., data = train_data2, probability = TRUE)
+  test_predictions_svm <- attr(predict(wine_svm, test_data2, probability = TRUE), "probabilities")[, "X1"]
+  all_predictions[[paste0(dataclass, "_SVM")]] <- test_predictions_svm  # Store predictions
+
+  ## XGB Model
+  set.seed(seed)
+  # Prepare training and test data for xgboost
+  traindata7 <- data$trainData
+  testdata7 <- data$testData
+  train_x <- data.matrix(traindata7[, -1])
+  train_y <- as.numeric(as.character(traindata7[, 1]))
+  test_x <- data.matrix(testdata7[, -1])
+  test_y <- as.numeric(as.character(testdata7[, 1]))
+
+  # Create xgboost DMatrix
+  xgb_train <- xgb.DMatrix(data = train_x, label = train_y)
+  xgb_test <- xgb.DMatrix(data = test_x, label = test_y)
+  watchlist <- list(train = xgb_train, test = xgb_test)
+
+  # Train xgboost model with early stopping
+  model <- xgb.train(data = xgb_train, max.depth = 3, watchlist = watchlist, nrounds = 150, early_stopping_rounds = 15)
+  best_iteration <- model$best_iteration  # Retrieve best iteration for final model
+  final <- xgboost(data = xgb_train, max.depth = 3, nrounds = best_iteration, verbose = 0)
+
+  # Make predictions on test data
+  test_predictions_xgb <- predict(final, newdata = xgb_test)
+  all_predictions[[paste0(dataclass, "_XGB")]] <- test_predictions_xgb  # Store predictions
+}
+
+# Convert predictions list to data frame for export
+predictions_df <- data.frame(all_predictions)
+
+# Save predictions to CSV file
+write.csv(predictions_df, "Delong_results/predictions.csv", row.names = FALSE)
+
+# Load test data for the specified data class and extract test labels
+dataclass <- "All"
+data <- get_data(dataclass)
+test_data <- data$testData
+y_test <- as.factor(test_data[, 1])  # Set the true labels as factor
+
+# Define a function to perform DeLong test on ROC AUCs between data subsets
+perform_delong_test <- function(model, predictions_df, y_test) {
+  results <- list()  # Initialize a list to store test results
+  dataclass_types <- c("All", "LE8", "Cov")  # Define types of data subsets for comparison
+
+  # Loop through pairs of data classes to calculate DeLong test p-values
+  for (i in 1:(length(dataclass_types) - 1)) {
+    for (j in (i + 1):length(dataclass_types)) {
+      dataclass1 <- dataclass_types[i]
+      dataclass2 <- dataclass_types[j]
+
+      # Compute ROC curves for each data class within the specified model
+      roc1 <- roc(y_test, predictions_df[[paste0(dataclass1, "_", model)]])
+      roc2 <- roc(y_test, predictions_df[[paste0(dataclass2, "_", model)]])
+
+      # Conduct DeLong test to compare AUCs between two ROC curves
+      delong_test <- roc.test(roc1, roc2)
+      results[[paste0(dataclass1, "_vs_", dataclass2)]] <- delong_test$p.value  # Store p-value in results list
+    }
+  }
+
+  return(results)  # Return the list of p-values for each comparison
+}
+
+# Perform DeLong test for the RF model and print results
+rf_results <- perform_delong_test("RF", predictions_df, y_test)
+print("RF Model DeLong Test Results:")
+print(rf_results)
+
+# Perform DeLong test for the SVM model and print results
+svm_results <- perform_delong_test("SVM", predictions_df, y_test)
+print("SVM Model DeLong Test Results:")
+print(svm_results)
+
+# Perform DeLong test for the XGB model and print results
+xgb_results <- perform_delong_test("XGB", predictions_df, y_test)
+print("XGB Model DeLong Test Results:")
+print(xgb_results)
+
+# Combine DeLong test results into a data frame for saving
+delong_results_df <- data.frame(
+  Model = rep(c("RF", "SVM", "XGB"), each = 3),  # Repeat model names for each comparison
+  Comparison = c(names(rf_results), names(svm_results), names(xgb_results)),  # Define comparison names
+  P_Value = c(unlist(rf_results), unlist(svm_results), unlist(xgb_results))  # Extract p-values
+)
+
+write.csv(delong_results_df, "Delong_results/setdelong_test_results.csv", row.names = FALSE)
+
+```

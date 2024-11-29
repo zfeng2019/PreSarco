@@ -1,0 +1,97 @@
+---
+title: "06_lr_model_validation"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r LR  Used for internal validation between different imputation methods}
+set.seed(seed)
+
+# table(ordinatrainData$SO)
+# class_counts <- table(ordinatrainData$SO)
+# reduced_counts <- round(class_counts * 0.5)
+# class_0 <- ordinatrainData[ordinatrainData$SO == 0, ]
+# class_1 <- ordinatrainData[ordinatrainData$SO == 1, ]
+# 
+# sampled_class_0 <- class_0[sample(1:nrow(class_0), reduced_counts["0"]), ]
+# sampled_class_1 <- class_1[sample(1:nrow(class_1), reduced_counts["1"]), ]
+# 
+# ordinatrainData <- rbind(sampled_class_0, sampled_class_1)
+# table(ordinatrainData$SO)
+# nrow(ordinatrainData)
+# table(ordinatestData$SO)
+# nrow(ordinatestData)
+
+# ordinatrainData<-read.csv("outliers/nooutliersSmoteAll.csv")
+# ordinatestData<-read.csv("outliers/nooutliersSmotetest.csv")
+
+ordinatrainData<-read.csv("Model_run_result/nooutliersSmoteAll.csv")
+ordinatestData<-read.csv("Model_run_result/nooutliersSmotetest.csv")
+
+factor_columns <- c("Sex", "HEI_Score", "PA_Score", 
+                    "Smoke_Score", "Sleep_Score", 
+                    "Non.hdl_Score", "Glucose_Score", "BP_Score")
+ordinatrainData[factor_columns] <- lapply(ordinatrainData[factor_columns], as.factor)
+ordinatestData[factor_columns] <- lapply(ordinatestData[factor_columns], as.factor)
+
+# Load and set up external training data with SMOTE for balancing
+internalTrain <- ordinatrainData
+internaltestData<-ordinatestData
+internalTrain$SO <- as.factor(internalTrain$SO)  # Convert target variable to factor
+print(table(internalTrain$SO))
+print(table(internaltestData$SO))
+
+# Train SVM model on the balanced data
+set.seed(seed)
+internalLR <- glm(SO ~ ., data = internalTrain, family = binomial(link = "logit"))
+internaltest_pred <- predict(internalLR, newdata = internaltestData, type = "response")
+
+lr_coefficients <- coef(internalLR)
+print(lr_coefficients)
+
+summary_lr <- summary(internalLR)
+coefficients_df <- as.data.frame(summary_lr$coefficients)
+colnames(coefficients_df) <- c("Estimate", "Std.Error", "z.value", "Pr(>|z|)")
+# print(coefficients_df)
+# write.csv(coefficients_df, "logistic_regression_coefficients.csv", row.names = TRUE)
+
+
+
+
+
+# Calculate optimal cutoff based on Youden's index and create confusion matrix
+cutoffs <- seq(0, 1, by = 0.005)
+metrics <- t(sapply(cutoffs, calculate_sens_spec1, true_labels = as.factor(internaltestData$SO), predicted_probs = internaltest_pred))
+best_cutoff_index <- which.max(metrics[, 3])
+best_cutoff_svm <- cutoffs[best_cutoff_index]
+best_youden_index_svm <- metrics[best_cutoff_index, 3]
+
+# Generate predicted labels using optimal cutoff
+predicted_labels <- ifelse(internaltest_pred > best_cutoff_svm, "1", "0")
+confusion_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(internaltestData$SO), dnn = c("Predicted", "Actual"), positive = "1")
+
+# Compute model performance metrics
+accuracy <- confusion_matrix$overall["Accuracy"]
+precision <- confusion_matrix$byClass["Pos Pred Value"]
+recall <- confusion_matrix$byClass["Sensitivity"]
+f1_score <- confusion_matrix$byClass["F1"]
+
+# Calculate AUC, confidence interval, and Brier score
+roc_obj <- roc(response = internaltestData$SO, predictor = internaltest_pred)
+auc_value <- auc(roc_obj)
+ci <- ci.auc(roc_obj, conf.level = 0.95)
+brier_score <- mean((internaltest_pred - (as.numeric(internaltestData$SO)))^2)
+
+# Output results
+print(brier_score)
+print(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+print(paste("Precision:", precision))
+print(paste("Recall:", recall))
+print(paste("F1 Score:", f1_score))
+print(paste("AUC:", auc_value))
+print(paste("AUC:", round(auc_value, 3), "(", round(ci[1], 4), "-", round(ci[3], 4), ")", sep = ""))
+print(paste("Brier Score:", brier_score))
+
+```

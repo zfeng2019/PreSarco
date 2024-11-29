@@ -1,0 +1,59 @@
+---
+title: "03_data_interpolation"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Data process}
+library(naniar)
+library(VIM)
+le8 <- read.csv("Data_Required_for_Model/le81.csv")        
+data <- read.csv("Data_Required_for_Model/Demographic.csv")
+merged_data <- merge(data, le8, by = "SEQN", all.x = TRUE)
+
+original_row_count <- nrow(merged_data)
+merged_data <- merged_data %>% filter(Age >= 18)
+cleaned_row_count <- nrow(merged_data)
+cat("Row count before Age filtering: ", original_row_count, "\n")
+cat("Rows removed by Age filtering: ", (original_row_count - cleaned_row_count), "\n")
+cat("Row count after Age filtering: ", cleaned_row_count, "\n")
+cat("----------------------------------------------\n")
+
+original_row_count <- nrow(merged_data)
+merged_data <- merged_data %>% filter(Age <= 60)
+cleaned_row_count <- nrow(merged_data)
+cat("Row count before Age filtering: ", original_row_count, "\n")
+cat("Rows removed by Age filtering: ", (original_row_count - cleaned_row_count), "\n")
+cat("Row count after Age filtering: ", cleaned_row_count, "\n")
+cat("----------------------------------------------\n")
+# merged_data<-merged_data[,2:15]
+
+factor_vars <- c("SO", "Sex", "RACE", "HEI_Score", "PA_Score", "Smoke_Score", "Sleep_Score", "Non.hdl_Score", "Glucose_Score", "BP_Score")
+merged_data[factor_vars] <- lapply(merged_data[factor_vars], as.factor)
+str(merged_data)
+
+# Load NHANES 2017-2018 demographic data
+data2017_18 <- read.xport("demographic_raw_data/DEMO_J2017_2018.XPT")
+# Find the maximum and minimum SEQN (unique identifier) values for 2017-2018
+max_seqn <- max(data2017_18$SEQN)
+min_seqn <- min(data2017_18$SEQN)
+
+# Filter rows for the 2017-2018 cohort based on SEQN range and separate data for other years
+data_2017_2018 <- merged_data[merged_data$SEQN >= min_seqn & merged_data$SEQN <= max_seqn, ]
+original_row_count <- nrow(data_2017_2018)
+data_2017_2018 <- na.omit(data_2017_2018)
+cleaned_row_count <- nrow(data_2017_2018)
+cat("Row count before na.omit: ", original_row_count, "\n")
+cat("Rows removed by na.omit: ", (original_row_count - cleaned_row_count), "\n")
+cat("Row count after na.omit: ", cleaned_row_count, "\n")
+
+merged_data <- merged_data[!(merged_data$SEQN >= min_seqn & merged_data$SEQN <= max_seqn), ]#12339
+
+seqn_data<-read.csv("Data_Required_for_Model/InterVeriDateSEQN.csv")
+seqn_data<-seqn_data$SEQN
+InterVeriDate<- merged_data[merged_data$SEQN %in% seqn_data, ]
+merged_data <- merged_data[!(merged_data$SEQN %in% seqn_data), ]
+
+```
+

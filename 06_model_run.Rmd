@@ -1,0 +1,710 @@
+---
+title: "06_model_run"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Model Evaluation with AUC and Cutoffs}
+# Set a random seed for reproducibility
+set.seed(seed)
+
+table(ordinatrainData$SO)
+class_counts <- table(ordinatrainData$SO)
+reduced_counts <- round(class_counts * 0.6)
+class_0 <- ordinatrainData[ordinatrainData$SO == 0, ]
+class_1 <- ordinatrainData[ordinatrainData$SO == 1, ]
+
+sampled_class_0 <- class_0[sample(1:nrow(class_0), reduced_counts["0"]), ]
+sampled_class_1 <- class_1[sample(1:nrow(class_1), reduced_counts["1"]), ]
+
+ordinatrainData <- rbind(sampled_class_0, sampled_class_1)
+table(ordinatrainData$SO)
+nrow(ordinatrainData)
+table(ordinatestData$SO)
+nrow(ordinatestData)
+
+
+# Function to retrieve data based on specified data class type ("All", "LE8", or "Cov")
+get_data <- function(dataclass) {
+  set.seed(seed)
+  if (dataclass == "All") {
+    trainData <- ordinatrainData
+    testData <- ordinatestData
+  } else if (dataclass == "LE8") {
+    # Select only the columns related to dietary factors (eat_names)
+    selected_columns <- c("SO", intersect(colnames(ordinatrainData), eat_names))
+    trainData <- ordinatrainData[, selected_columns]
+    selected_columns <- c("SO", intersect(colnames(ordinatestData), eat_names))
+    testData <- ordinatestData[, selected_columns]
+  } else if (dataclass == "Cov") {
+    # Select only columns related to demographic factors (people_names)
+    selected_columns <- c("SO", intersect(colnames(ordinatrainData), people_names))
+    trainData <- ordinatrainData[, selected_columns]
+    selected_columns <- c("SO", intersect(colnames(ordinatestData), people_names))
+    testData <- ordinatestData[, selected_columns]
+  }
+  return(list(trainData = trainData, testData = testData))
+}
+
+# Function to calculate sensitivity, specificity, and Youden's Index at a given cutoff
+calculate_sens_spec <- function(cutoff, true_labels, predicted_probs) {
+  predicted_labels <- ifelse(predicted_probs > cutoff, "X1", "X0")
+  confusion_matrix <- caret::confusionMatrix(factor(predicted_labels, levels = levels(true_labels)), true_labels, positive = "X1")
+  sensitivity <- confusion_matrix$byClass["Sensitivity"]
+  specificity <- confusion_matrix$byClass["Specificity"]
+  youdens_index <- sensitivity + specificity - 1
+  return(c(sensitivity, specificity, youdens_index))
+}
+
+# Alternative function to calculate metrics with binary labels
+calculate_sens_spec1 <- function(cutoff, true_labels, predicted_probs) {
+  predicted_labels <- ifelse(predicted_probs > cutoff, 1, 0)
+  confusion_matrix <- caret::confusionMatrix(factor(predicted_labels, levels = levels(true_labels)), true_labels, positive = "1")
+  sensitivity <- confusion_matrix$byClass["Sensitivity"]
+  specificity <- confusion_matrix$byClass["Specificity"]
+  youdens_index <- sensitivity + specificity - 1
+  return(c(sensitivity, specificity, youdens_index))
+}
+
+# Define model types and data classes for analysis
+dataclass_types <- c("All", "LE8", "Cov")
+auprc_results <- list() # List to store AUPRC results
+pr_curves <- list() # List to store PR curves for each model and data type
+
+# Define the models to be trained and tested
+models <- c("RF", "LR", "SVM", "ADA", "NB", "LGB")
+dataclasses <- c("All", "LE8", "Cov")
+
+# Initialize lists to store Youden's Index, cutoff values, and confidence intervals (CI) for each model
+youden_results <- list(
+  rf =  data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  svm = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  ADA = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  LR = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  NB = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  LGB = data.frame(matrix(ncol = 1, nrow = length(dataclasses)))
+)
+
+# Assign row names to each data frame in youden_results
+for (name in names(youden_results)) {
+  rownames(youden_results[[name]]) <- dataclasses
+}
+
+# Similarly, initialize lists to store cutoff values and CI for each model
+cutoff_results <- list(
+  rf =  data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  svm = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  ADA = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  LR = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  NB = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  LGB = data.frame(matrix(ncol = 1, nrow = length(dataclasses)))
+)
+
+for (name in names(cutoff_results)) {
+  rownames(cutoff_results[[name]]) <- dataclasses
+}
+
+# CI results to store confidence intervals for AUC values of each model
+ci_results <- list(
+  rf =  data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  svm = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  ADA = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  LR = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  NB = data.frame(matrix(ncol = 1, nrow = length(dataclasses))),
+  LGB = data.frame(matrix(ncol = 1, nrow = length(dataclasses)))
+)
+
+for (name in names(ci_results)) {
+  rownames(ci_results[[name]]) <- dataclasses
+}
+
+# Consolidate results for each model (Youden Index, cutoff, CI) into a list of data frames
+results_list <- list(
+  rf  = data.frame(matrix(ncol = 3, nrow = length(dataclasses))),
+  svm = data.frame(matrix(ncol = 3, nrow = length(dataclasses))),
+  ADA = data.frame(matrix(ncol = 3, nrow = length(dataclasses))),
+  LR = data.frame(matrix(ncol = 3, nrow = length(dataclasses))),
+  NB = data.frame(matrix(ncol = 3, nrow = length(dataclasses))),
+  LGB = data.frame(matrix(ncol = 3, nrow = length(dataclasses)))
+)
+
+# Assign column names to each data frame in results_list to store Youden Index, cutoff, and CI
+for (name in names(results_list)) {
+  colnames(results_list[[name]]) <- c("Youden", "Cutoff","CI")
+  rownames(results_list[[name]]) <- dataclasses
+}
+
+# Loop through each dataclass type ("All", "LE8", "Cov") for training and evaluation
+for (dataclass in dataclass_types) {
+  # Set random seed for reproducibility and retrieve training and test data for current dataclass
+  
+  # dataclass<-"All"
+  set.seed(seed)
+  data <- get_data(dataclass)
+  train_data <- data$trainData
+  test_data <- data$testData
+  X_train <- train_data[, -1]
+  y_train <- as.factor(train_data[, 1])
+  X_test <- test_data[, -1]
+  y_test <- as.factor(test_data[, 1])
+
+  # Initialize process counter
+  process <- 1
+  set.seed(seed)
+  
+  # Set the mtry parameter for Random Forest depending on dataclass type
+  if (dataclass == "All") {
+    mtry <- c(1:10)
+  } else if (dataclass == "LE8") {
+    mtry <- c(1:6)
+  } else if (dataclass == "Cov") {
+    mtry <- c(1:10)
+  }
+  tuneGrid <- expand.grid(.mtry = mtry)
+
+  # Train control for cross-validation
+  trControl <- trainControl(
+    method = "repeatedcv",
+    number = 4,
+    repeats = 3,
+    summaryFunction = twoClassSummary,
+    classProbs = TRUE,
+    savePredictions = "final",
+    selectionFunction = "best"
+  )
+  
+  # Format training and test data for factor levels
+  train_data1 <- train_data
+  train_data1$SO <- as.factor(train_data1$SO)
+  levels(train_data1$SO) <- make.names(levels(train_data1$SO), unique = TRUE)
+  test_data1 <- test_data
+  test_data1$SO <- as.factor(test_data1$SO)
+  levels(test_data1$SO) <- make.names(levels(test_data1$SO), unique = TRUE)
+
+   # Train the Random Forest model with cross-validation
+  final_model_rf <- caret::train(SO ~ .,
+    data = train_data1,
+    method = "rf",
+    metric = "ROC",
+    tuneGrid = tuneGrid,
+    trControl = trControl,
+    importance = TRUE,
+    ntree = 150
+  )
+
+  # Predict probabilities for the test set using Random Forest model
+  test_predictions_rf <- predict(final_model_rf, newdata = X_test, type = "prob")[, "X1"]
+
+  # Evaluate model performance across multiple cutoff thresholds to find the best Youden's Index
+  cutoffs <- seq(0, 1, by = 0.005)
+  metrics <- t(sapply(cutoffs, calculate_sens_spec, true_labels = test_data1$SO, predicted_probs = test_predictions_rf))
+  best_cutoff_index <- which.max(metrics[, 3])
+  best_cutoff_rf <- cutoffs[best_cutoff_index]
+  best_youden_index_rf <- metrics[best_cutoff_index, 3]
+  predicted_labels <- ifelse(test_predictions_rf > best_cutoff_rf, levels(y_test)[2], levels(y_test)[1])
+  
+  # Calculate performance metrics
+  confusion_matrix <- confusionMatrix(as.factor(predicted_labels), y_test, dnn = c("预测值", "参考值"), positive = "1")
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+
+   # Store results
+  cutoff_results$rf[dataclass, 1] <- best_cutoff_rf
+  youden_results$rf[dataclass, 1] <- best_youden_index_rf
+  
+  # Generate ROC and AUC for the model and store confidence intervals
+  confusion_matrix_best <- confusionMatrix(factor(predicted_labels, levels = levels(y_test)), y_test, positive = "1")
+  print(table(predicted_labels))
+  confusion_matrix_best
+  roc_obj <- roc(response = y_test, predictor = test_predictions_rf)
+  auc_value <- auc(roc_obj)
+  auc_value
+  roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  
+  ci_results$rf[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  
+  # Print performance metrics
+  print(confusion_matrix)
+  print(paste("Accuracy:", accuracy))
+  print(paste("Precision:", precision))
+  print(paste("Recall:", recall)) # sensitivity
+  print(paste("F1 Score:", f1_score))
+  print(paste("AUC:", auc_value))
+  print(paste(paste("Have finished:", dataclass), process))
+  process <- process + 1
+
+  if (dataclass == "All") {
+    roc_data_rf_all <- roc_data
+    roc_obj_rf_all <- roc_obj
+    roc_auc_rf_all <- auc(roc_obj_rf_all)
+  } else if (dataclass == "LE8") {
+    roc_data_rf_eat <- roc_data
+    roc_obj_rf_eat <- roc_obj
+    roc_auc_rf_eat <- auc(roc_obj_rf_eat)
+  } else if (dataclass == "Cov") {
+    roc_data_rf_people <- roc_data
+    roc_obj_rf_people <- roc_obj
+    roc_auc_rf_people <- auc(roc_obj_rf_people)
+  }
+
+
+
+  set.seed(seed)
+  train_data2 <- train_data
+  train_data2$SO <- as.factor(train_data2$SO)
+  levels(train_data2$SO) <- make.names(levels(train_data2$SO), unique = TRUE)
+  test_data2 <- test_data
+  test_data2$SO <- as.factor(test_data2$SO)
+  levels(test_data2$SO) <- make.names(levels(test_data2$SO), unique = TRUE)
+
+  wine_svm <- svm(SO ~ ., data = train_data2,probability = TRUE)#, kernel = "linear"
+  test_predictions_svm <- attr(predict(wine_svm, test_data2, probability = TRUE), "probabilities")[, "X1"]
+
+  # test_predictions_svm <- predict(wine_svm, newdata = test_data2, probability = TRUE,type = "prob")[, "X1"]
+  cutoffs <- seq(0, 1, by = 0.005)
+  metrics <- t(sapply(cutoffs, calculate_sens_spec, true_labels = test_data2$SO, predicted_probs = test_predictions_svm))
+  best_cutoff_index <- which.max(metrics[, 3])
+  best_cutoff_svm <- cutoffs[best_cutoff_index]
+  best_youden_index_svm <- metrics[best_cutoff_index, 3]
+  predicted_labels <- ifelse(test_predictions_svm > best_cutoff_svm, levels(y_test)[2], levels(y_test)[1])
+  confusion_matrix <- confusionMatrix(as.factor(predicted_labels), y_test, dnn = c("预测值", "参考值"), positive = "1")
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+
+  cutoff_results$svm[dataclass, 1] <- best_cutoff_svm
+  youden_results$svm[dataclass, 1] <- best_youden_index_svm
+
+  roc_obj <- roc(response = test_data2$SO, predictor = test_predictions_svm)
+  auc_value <- auc(roc_obj)
+  ci <- ci.auc(roc_obj, conf.level = 0.95)
+  ci_results$svm[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  auc_value
+  ci
+  roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  print(confusion_matrix)
+  print(paste("Accuracy:", accuracy))
+  print(paste("Precision:", precision))
+  print(paste("Recall:", recall)) # sensitivity
+  print(paste("F1 Score:", f1_score))
+  print(paste("AUC:", auc_value))
+  print(paste(paste("Have finished:", dataclass), process))
+  process <- process + 1
+
+  if (dataclass == "All") {
+    roc_data_svm_all <- roc_data
+    roc_obj_svm_all <- roc_obj
+    roc_auc_svm_all <- auc(roc_obj_svm_all)
+  } else if (dataclass == "LE8") {
+    roc_data_svm_eat <- roc_data
+    roc_obj_svm_eat <- roc_obj
+    roc_auc_svm_eat <- auc(roc_obj_svm_eat)
+  } else if (dataclass == "Cov") {
+    roc_data_svm_people <- roc_data
+    roc_obj_svm_people <- roc_obj
+    roc_auc_svm_people <- auc(roc_obj_svm_people)
+  }
+
+  set.seed(seed)
+  train_data3 <- train_data
+  train_data3$SO <- as.factor(train_data3$SO)
+  levels(train_data3$SO) <- make.names(levels(train_data3$SO), unique = TRUE)
+  test_data3 <- test_data
+  test_data3$SO <- as.factor(test_data3$SO)
+  levels(test_data3$SO) <- make.names(levels(test_data3$SO), unique = TRUE)
+  paramGrid <- expand.grid(
+    mfinal = c(30, 50, 100),
+    maxdepth = c(5, 10)
+  )
+  ctrl <- trainControl(
+    method = "repeatedcv",
+    number = 3,
+    repeats = 3,
+    search = "random",
+    savePredictions = "final",
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  )
+  final_model_ada <- caret::train(
+    SO ~ .,
+    data = train_data3,
+    method = "AdaBag",
+    trControl = ctrl,
+    tuneGrid = paramGrid,
+    metric = "ROC"
+  )
+  test_predictions_ada <- predict(final_model_ada, test_data3, type = "prob")[, "X1"]
+  cutoffs <- seq(0, 1, by = 0.005)
+  metrics <- t(sapply(cutoffs, calculate_sens_spec, true_labels = test_data3$SO, predicted_probs = test_predictions_ada))
+  best_cutoff_index <- which.max(metrics[, 3])
+  best_cutoff_ada <- cutoffs[best_cutoff_index]
+  best_youden_index_ada <- metrics[best_cutoff_index, 3]
+  predicted_labels <- ifelse(test_predictions_ada > best_cutoff_ada, levels(y_test)[2], levels(y_test)[1])
+  confusion_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_data$SO), dnn = c("预测值", "参考值"), positive = "1")
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+
+  cutoff_results$ADA[dataclass, 1] <- best_cutoff_ada
+  youden_results$ADA[dataclass, 1] <- best_youden_index_ada
+
+  roc_obj <- roc(response = test_data3$SO, predictor = test_predictions_ada)
+  auc_value <- auc(roc_obj)
+  roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  ci_results$ADA[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  
+  print(confusion_matrix)
+  print(paste("Accuracy:", accuracy))
+  print(paste("Precision:", precision))
+  print(paste("Recall:", recall)) # sensitivity
+  print(paste("F1 Score:", f1_score))
+  print(paste("AUC:", auc_value))
+  print(paste(paste("Have finished:", dataclass), process))
+  process <- process + 1
+
+  if (dataclass == "All") {
+    roc_data_ada_all <- roc_data
+    roc_obj_ada_all <- roc_obj
+    roc_auc_ada_all <- auc(roc_obj_ada_all)
+  } else if (dataclass == "LE8") {
+    roc_data_ada_eat <- roc_data
+    roc_obj_ada_eat <- roc_obj
+    roc_auc_ada_eat <- auc(roc_obj_ada_eat)
+  } else if (dataclass == "Cov") {
+    roc_data_ada_people <- roc_data
+    roc_obj_ada_people <- roc_obj
+    roc_auc_ada_people <- auc(roc_obj_ada_people)
+  }
+
+
+  set.seed(seed)
+  X_train <- train_data[, -1]
+  y_train <- as.factor(train_data[, 1])
+  X_test <- test_data[, -1]
+  y_test <- as.factor(test_data[, 1])
+
+  traindata5 <- data$trainData
+  testdata5 <- data$testData
+  traindata5$SO <- as.factor(traindata5$SO)
+  testdata5$SO <- as.factor(testdata5$SO)
+  
+  class_weights <- table(traindata5$SO)
+  scale_pos_weight <- class_weights[1] / class_weights[2]
+  weights <- ifelse(traindata5$SO == levels(traindata5$SO)[2], scale_pos_weight, 1)
+
+  lr_model <- glm(SO ~ ., data = traindata5, family = binomial(link = "logit"))
+  # best_model <- step(lr_model)
+  # lr_model1 <- glm(formula = best_model$formula, family = binomial(link = "logit"), data = traindata5, weights = weights)
+  
+  test_predictions_lr <- predict(lr_model, newdata = testdata5, type = "response")
+
+  cutoffs <- seq(0, 1, by = 0.005)
+  metrics <- t(sapply(cutoffs, calculate_sens_spec1, true_labels = testdata5[, 1], predicted_probs = test_predictions_lr))
+  best_cutoff_index <- which.max(metrics[, 3])
+  best_cutoff_lr <- cutoffs[best_cutoff_index]
+  best_youden_index_lr <- metrics[best_cutoff_index, 3]
+  predicted_labels <- ifelse(test_predictions_lr > best_cutoff_lr, 1, 0)
+
+  confusion_matrix <- confusionMatrix(as.factor(predicted_labels), testdata5$SO, dnn = c("参考值", "预测值"), positive = "1")
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+
+  cutoff_results$LR[dataclass, 1] <- best_cutoff_lr
+  youden_results$LR[dataclass, 1] <- best_youden_index_lr
+
+  roc_obj <- roc(response = y_test, predictor = test_predictions_lr)
+  auc_value <- auc(roc_obj)
+  roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  ci_results$LR[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  
+  print(confusion_matrix)
+  print(paste("Accuracy:", accuracy))
+  print(paste("Precision:", precision))
+  print(paste("Recall:", recall)) # sensitivity
+  print(paste("F1 Score:", f1_score))
+  print(paste("AUC:", auc_value))
+  print(paste(paste("Have finished:", dataclass), process))
+  process <- process + 1
+
+  if (dataclass == "All") {
+    roc_data_LR_all <- roc_data
+    roc_obj_LR_all <- roc_obj
+    roc_auc_LR_all <- auc(roc_obj_LR_all)
+  } else if (dataclass == "LE8") {
+    roc_data_LR_eat <- roc_data
+    roc_obj_LR_eat <- roc_obj
+    roc_auc_LR_eat <- auc(roc_obj_LR_eat)
+  } else if (dataclass == "Cov") {
+    roc_data_LR_people <- roc_data
+    roc_obj_LR_people <- roc_obj
+    roc_auc_LR_people <- auc(roc_obj_LR_people)
+  }
+
+
+  set.seed(seed)
+  traindata7 <- data$trainData
+  testdata7 <- data$testData
+  final_model_bayes <- naiveBayes(SO ~ ., data = traindata7)
+  test_predictions_nb <- predict(final_model_bayes, X_test, type = "raw", laplace=1)[,"1"]
+  
+  cutoffs <- seq(0, 1, by = 0.005)
+  metrics <- t(sapply(cutoffs, calculate_sens_spec1, true_labels = as.factor(testdata7[, 1]), predicted_probs = test_predictions_nb))
+  best_cutoff_index <- which.max(metrics[, 3])
+  best_cutoff_nb <- cutoffs[best_cutoff_index]
+  best_youden_index_nb <- metrics[best_cutoff_index, 3]
+  predicted_labels <- ifelse(test_predictions_nb > best_cutoff_nb, levels(y_test)[2], levels(y_test)[1])
+  confusion_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(testdata7[, 1]), dnn = c("预测值", "参考值"), positive = "1")
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+  
+  cutoff_results$NB[dataclass, 1] <- best_cutoff_nb
+  youden_results$NB[dataclass, 1] <- best_youden_index_nb
+
+  roc_obj <- roc(response = y_test, predictor = test_predictions_nb)
+  auc_value <- auc(roc_obj)
+  roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  ci_results$NB[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  
+  
+  
+  # train_x <- data.matrix(sapply(traindata7[, -1], as.numeric))
+  # train_y <- traindata7[, 1]
+  # train_y <- as.numeric(as.character(traindata7[, 1]))
+  # test_x <- data.matrix(sapply(testdata7[, -1], as.numeric))
+  # test_y <- testdata7[, 1]
+  # test_y <- as.numeric(as.character(testdata7[, 1]))
+  # bayes_model <- naiveBayes(Class ~ ., data = HouseVotes84)
+  # 
+  # train_pool <- catboost.load_pool(data = train_x, label = train_y)
+  # 
+  # 
+  # model <- catboost.train(train_pool, NULL,
+  #   params = list(
+  #     loss_function = "Logloss", # 损失函数
+  #     iterations = 51, # 100棵树
+  #     metric_period = 10 # 每10棵树计算1次指标
+  #   )
+  # )
+  # 
+  # test_pool <- catboost.load_pool(data = test_x, label = test_y)
+  # test_predictions_nb <- catboost.predict(model, test_pool, prediction_type = "Probability")
+  # 
+  # cutoffs <- seq(0, 1, by = 0.005)
+  # metrics <- t(sapply(cutoffs, calculate_sens_spec1, true_labels = as.factor(testdata7[, 1]), predicted_probs = test_predictions_nb))
+  # best_cutoff_index <- which.max(metrics[, 3])
+  # best_cutoff_xgb <- cutoffs[best_cutoff_index]
+  # best_youden_index_xgb <- metrics[best_cutoff_index, 3]
+  # predicted_labels <- ifelse(test_predictions_nb > best_cutoff_xgb, levels(y_test)[2], levels(y_test)[1])
+  # confusion_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_y), dnn = c("预测值", "参考值"), positive = "1")
+  # accuracy <- confusion_matrix$overall["Accuracy"]
+  # precision <- confusion_matrix$byClass["Pos Pred Value"]
+  # recall <- confusion_matrix$byClass["Sensitivity"]
+  # f1_score <- confusion_matrix$byClass["F1"]
+  # 
+  # cutoff_results$CAT[dataclass, 1] <- best_cutoff_xgb
+  # youden_results$CAT[dataclass, 1] <- best_youden_index_xgb
+  # 
+  # roc_obj <- roc(response = y_test, predictor = test_predictions_nb)
+  # auc_value <- auc(roc_obj)
+  # roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  # ci_results$CAT[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  
+  
+  
+  print(confusion_matrix)
+  print(paste("Accuracy:", accuracy))
+  print(paste("Precision:", precision))
+  print(paste("Recall:", recall)) # sensitivity
+  print(paste("F1 Score:", f1_score))
+  print(paste("AUC:", auc_value))
+  print(paste(paste("Have finished:", dataclass), process))
+  process <- process + 1
+
+  if (dataclass == "All") {
+    roc_data_nb_all <- roc_data
+    roc_obj_nb_all <- roc_obj
+    roc_auc_nb_all <- auc(roc_obj_nb_all)
+  } else if (dataclass == "LE8") {
+    roc_data_nb_eat <- roc_data
+    roc_obj_nb_eat <- roc_obj
+    roc_auc_nb_eat <- auc(roc_obj_nb_eat)
+  } else if (dataclass == "Cov") {
+    roc_data_nb_people <- roc_data
+    roc_obj_nb_people <- roc_obj
+    roc_auc_nb_people <- auc(roc_obj_nb_people)
+  }
+
+  set.seed(seed)
+  train_data9 <- data$trainData
+  test_data9 <- data$testData
+  
+  train_data9$SO <- as.factor(train_data9$SO)
+  test_data9$SO <- as.factor(test_data9$SO)
+  train_matrix <- as.matrix(train_data9[, -which(names(train_data9) == "SO")])
+  train_label <- as.numeric(train_data9$SO) - 1 # LightGBM需要标签为0和1
+  test_matrix <- as.matrix(test_data9[, -which(names(test_data9) == "SO")])
+  test_label <- as.numeric(test_data9$SO) - 1
+  dtrain <- lgb.Dataset(data = train_matrix, label = train_label)
+  dtest <- lgb.Dataset(data = test_matrix, label = test_label, reference = dtrain)
+  param_range <- list(
+    num_leaves = c(20, 50, 70, 100, 130),
+    learning_rate = c(0.001, 0.1),
+    max_depth = c(-1, 10, 20),
+    min_data_in_leaf = c(10, 20, 50),
+    lambda_l1 = c(0, 0.1),
+    lambda_l2 = c(0, 0.1)
+  )
+
+  best_params <- list()
+  best_auc <- 0
+
+  for (i in 1:15) {
+    params <- list(
+      objective = "binary",
+      metric = "auc",
+      num_leaves = sample(param_range$num_leaves, 1),
+      learning_rate = runif(1, param_range$learning_rate[1], param_range$learning_rate[2]),
+      max_depth = sample(param_range$max_depth, 1),
+      min_data_in_leaf = sample(param_range$min_data_in_leaf, 1),
+      lambda_l1 = runif(1, param_range$lambda_l1[1], param_range$lambda_l1[2]),
+      lambda_l2 = runif(1, param_range$lambda_l2[1], param_range$lambda_l2[2]),
+      feature_pre_filter = FALSE
+    )
+
+    cv <- lgb.cv(
+      params = params,
+      data = dtrain,
+      nrounds = 1500,
+      nfold = 5,
+      stratified = TRUE,
+      early_stopping_rounds = 50,
+      eval = "auc",
+      verbose = -1
+    )
+
+    auc <- max(sapply(cv$record_evals$valid$auc$eval, function(x) max(unlist(x))))
+
+    if (auc > best_auc) {
+      best_auc <- auc
+      best_params <- params
+    }
+  }
+
+  
+  
+  
+  print(best_params)
+  model <- lgb.train(
+    best_params,
+    data = dtrain,
+    nrounds = 2000,
+    valids = list(test = dtest),
+    early_stopping_rounds = 60,
+    verbose = 2
+  )
+  test_predictions_lgb <- predict(model, test_matrix, type = "prob")
+  cutoffs <- seq(0, 1, by = 0.005)
+  metrics <- t(sapply(cutoffs, calculate_sens_spec1, true_labels = test_data9$SO, predicted_probs = test_predictions_lgb))
+  best_cutoff_index <- which.max(metrics[, 3])
+  best_cutoff_gbm <- cutoffs[best_cutoff_index]
+  best_youden_index_gbm <- metrics[best_cutoff_index, 3]
+  predicted_labels <- ifelse(test_predictions_lgb > best_cutoff_gbm, levels(y_test)[2], levels(y_test)[1])
+
+  confusion_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label), dnn = c("预测值", "参考值"), positive = "1")
+  accuracy <- confusion_matrix$overall["Accuracy"]
+  precision <- confusion_matrix$byClass["Pos Pred Value"]
+  recall <- confusion_matrix$byClass["Sensitivity"]
+  f1_score <- confusion_matrix$byClass["F1"]
+
+  cutoff_results$LGB[dataclass, 1] <- best_cutoff_gbm
+  youden_results$LGB[dataclass, 1] <- best_youden_index_gbm
+
+  roc_obj <- roc(response = y_test, predictor = test_predictions_lgb)
+  auc_value <- auc(roc_obj)
+  roc_data <- data.frame(1 - roc_obj$specificities, roc_obj$sensitivities)
+  ci_results$LGB[dataclass, 1] <- sprintf("%.2f(%.2f,%.2f)", auc_value, ci.auc(roc_obj, conf.level = 0.95)[1], ci.auc(roc_obj, conf.level = 0.95)[3])
+  
+  print(confusion_matrix)
+  print(paste("Accuracy:", accuracy))
+  print(paste("Precision:", precision))
+  print(paste("Recall:", recall)) # sensitivity
+  print(paste("F1 Score:", f1_score))
+  print(paste("AUC:", auc_value))
+  print(paste(paste("Have finished:", dataclass), process))
+  process <- process + 1
+
+  if (dataclass == "All") {
+    roc_data_LGB_all <- roc_data
+    roc_obj_LGB_all <- roc_obj
+    roc_auc_LGB_all <- auc(roc_obj_LGB_all)
+  } else if (dataclass == "LE8") {
+    roc_data_LGB_eat <- roc_data
+    roc_obj_LGB_eat <- roc_obj
+    roc_auc_LGB_eat <- auc(roc_obj_LGB_eat)
+  } else if (dataclass == "Cov") {
+    roc_data_LGB_people <- roc_data
+    roc_obj_LGB_people <- roc_obj
+    roc_auc_LGB_people <- auc(roc_obj_LGB_people)
+  }
+
+  if (dataclass == "All") {
+    results <- data.frame(
+      Real = y_test,
+      RF = test_predictions_rf,
+      SVM = test_predictions_svm,
+      Ada = test_predictions_ada,
+      LR = test_predictions_lr,
+      NB = test_predictions_nb,
+      LGB = test_predictions_lgb
+    )
+    write.csv(results, "Model_run_result/model_predictions.csv", row.names = FALSE)
+  }
+
+
+  predictions <- list(
+    test_predictions_rf, test_predictions_lr, test_predictions_svm,
+    test_predictions_ada, test_predictions_nb, test_predictions_lgb
+  )
+
+  names(predictions) <- models
+
+  for (i in 1:length(models)) {
+    scores <- unlist(predictions[[i]])
+    scores_class1 <- scores[y_test == 0]
+    scores_class0 <- scores[y_test == 1]
+    pr <- pr.curve(scores.class0 = scores_class0, scores.class1 = scores_class1, curve = TRUE)
+    pr_curves[[paste0(models[i], "_", dataclass)]] <- pr
+    auprc_results[[paste0(models[i], "_", dataclass)]] <- pr$auc.integral
+  }
+}
+
+
+# Update each model's results with the calculated cutoff, Youden's Index, and confidence intervals
+for (name in names(results_list)) {
+  results_list[[name]][, "Cutoff"] <- unlist(cutoff_results[[name]]) # Insert best cutoff values
+  results_list[[name]][, "Youden"] <- unlist(youden_results[[name]]) # Insert Youden's Index
+  results_list[[name]][, "CI"] <- unlist(ci_results[[name]]) # Insert confidence intervals for AUC
+}
+
+# Combine all model results into a single data frame
+all_results1 <- data.frame()
+for (name in names(results_list)) {
+  model_result <- as.data.frame(results_list[[name]]) # Convert individual model results to data frame
+  model_result$model <- name # Add a column indicating the model name
+  all_results1 <- rbind(all_results1, model_result) # Append to cumulative results
+}
+
+# Write the final combined results to an Excel file
+write.xlsx(all_results1, "Model_run_result/youden_results.xlsx")
+
+
+```

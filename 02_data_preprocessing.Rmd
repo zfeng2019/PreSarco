@@ -1,0 +1,161 @@
+---
+title: "02_data_preprocessing"
+author: "Caraxes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Load and process NHANES data}
+# Load data from NHANES datasets for various years and select relevant columns
+
+# Load NHANES data for 2011-2012 and select columns for body composition
+DXX_2011 <- nhanes('DXX_G') %>%
+  dplyr::select(SEQN, DXDLALE, DXDLLLE, DXDRALE, DXDRLLE)
+
+# Load NHANES data for 2013-2014
+DXX_2013 <- nhanes('DXX_H') %>%
+  dplyr::select(SEQN, DXDLALE, DXDLLLE, DXDRALE, DXDRLLE)
+
+# Load NHANES data for 2015-2016
+DXX_2015 <- nhanes('DXX_I') %>%
+  dplyr::select(SEQN, DXDLALE, DXDLLLE, DXDRALE, DXDRLLE) 
+
+# Load NHANES data for 2017-2018
+DXX_2017 <- nhanes('DXX_J') %>%
+  dplyr::select(SEQN, DXDLALE, DXDLLLE, DXDRALE, DXDRLLE) 
+
+# Combine data from all years into a single dataframe
+DXX_all <- bind_rows(DXX_2011, DXX_2013, DXX_2015, DXX_2017)
+
+# Rename columns for easier understanding
+DXX_all <- plyr::rename(
+  DXX_all,
+  c(
+    DXDLALE = 'left_arm',   # Left arm lean mass
+    DXDLLLE = 'left_leg',   # Left leg lean mass
+    DXDRALE = 'right_arm',  # Right arm lean mass
+    DXDRLLE = 'right_leg'   # Right leg lean mass
+  )
+)
+
+# Define a function to sum values if all values are non-missing; otherwise return NA
+sum_if_all_present <- function(x) {
+  if (all(!is.na(x))) {
+    return(sum(x))
+  } else {
+    return(NA)
+  }
+}
+
+# Apply custom function across columns 2 to 5 to calculate ASM (Appendicular Skeletal Muscle)
+DXX_all$ASM <- apply(DXX_all[, 2:5], 1, sum_if_all_present)
+
+# Keep only SEQN and ASM columns
+DXX_all <- DXX_all[, c("SEQN", "ASM")]
+
+# Save ASM data as a CSV file
+write.csv(DXX_all, "Data_Required_for_Model/ASM.csv", row.names = FALSE)
+
+# Load body measurement data for different years, selecting relevant columns
+
+# Load 2011-2012 body measurement data
+BMX_2011 <- nhanes('BMX_G') %>%
+  dplyr::select(SEQN, BMXWT, BMXHT, BMXBMI, BMXARMC, BMXWAIST)
+
+# Load 2013-2014 body measurement data
+BMX_2013 <- nhanes('BMX_H') %>%
+  dplyr::select(SEQN, BMXWT, BMXHT, BMXBMI, BMXARMC, BMXWAIST)
+
+# Load 2015-2016 body measurement data
+BMX_2015 <- nhanes('BMX_I') %>%
+  dplyr::select(SEQN, BMXWT, BMXHT, BMXBMI, BMXARMC, BMXWAIST) 
+
+# Load 2017-2018 body measurement data
+BMX_2017 <- nhanes('BMX_J') %>%
+  dplyr::select(SEQN, BMXWT, BMXHT, BMXBMI, BMXARMC, BMXWAIST) 
+
+# Combine body measurement data from all years into one dataframe
+BMX_all <- bind_rows(BMX_2011, BMX_2013, BMX_2015, BMX_2017)
+
+# Rename columns for easier understanding
+BMX_all <- plyr::rename(
+  BMX_all,
+  c(
+    BMXWT = 'Weight',       # Weight
+    BMXHT = 'Height',       # Height
+    BMXBMI = 'BMI',         # Body Mass Index
+    BMXARMC = 'Armgirth',   # Arm girth
+    BMXWAIST = 'Waistline'  # Waist circumference
+
+  )
+)
+
+# Merge body measurement data with ASM data using SEQN as the unique identifier
+Body_data <- left_join(BMX_all, DXX_all, by = "SEQN")
+
+# Calculate ASMI (Appendicular Skeletal Muscle Index) and add as a new column
+Body_data$ASMI <- (Body_data$ASM / 1000) / (Body_data$Height / 100)^2
+
+# Load demographic data for different years and select relevant columns
+
+# Load 2011-2012 demographic data
+DEMO_2011 <- nhanes('DEMO_G', translated = FALSE) %>%
+  dplyr::select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH3, DMDEDUC3, DMDEDUC2, DMDMARTL, INDFMPIR, WTINT2YR, WTMEC2YR, SDMVPSU, SDMVSTRA)
+
+# Load 2013-2014 demographic data
+DEMO_2013 <- nhanes('DEMO_H', translated = FALSE) %>%
+  dplyr::select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH3, DMDEDUC3, DMDEDUC2, DMDMARTL, INDFMPIR, WTINT2YR, WTMEC2YR, SDMVPSU, SDMVSTRA)
+
+# Load 2015-2016 demographic data
+DEMO_2015 <- nhanes('DEMO_I', translated = FALSE) %>%
+  dplyr::select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH3, DMDEDUC3, DMDEDUC2, DMDMARTL, INDFMPIR, WTINT2YR, WTMEC2YR, SDMVPSU, SDMVSTRA) 
+
+# Load 2017-2018 demographic data
+DEMO_2017 <- nhanes('DEMO_J', translated = FALSE) %>%
+  dplyr::select(SEQN, RIAGENDR, RIDAGEYR, RIDRETH3, DMDEDUC3, DMDEDUC2, DMDMARTL, INDFMPIR, WTINT2YR, WTMEC2YR, SDMVPSU, SDMVSTRA) 
+
+# Combine demographic data from all years into a single dataframe
+DEMO_all <- bind_rows(DEMO_2011, DEMO_2013, DEMO_2015, DEMO_2017)
+
+# Rename columns for readability
+DEMO_all <- plyr::rename(
+  DEMO_all,
+  c(
+    RIAGENDR = 'Sex',    # Gender
+    RIDAGEYR = 'Age',       # Age
+    RIDRETH3 = 'RACE',      # Race/Ethnicity
+    DMDEDUC3 = 'EDU3',      # Education level (detailed)
+    DMDEDUC2 = 'EDU2',      # Education level (simplified)
+    DMDMARTL = 'MARITAL',   # Marital status
+    INDFMPIR = 'PIR'        # Poverty Income Ratio
+  )
+)
+
+# Create a new education level variable 'Edu_level' based on EDU3 and EDU2 variables
+DEMO_all$Edu_level <- NA
+DEMO_all$Edu_level[!is.na(DEMO_all$EDU3) & DEMO_all$EDU3 %in% c(0:8)] <- 3
+DEMO_all$Edu_level[!is.na(DEMO_all$EDU3) & DEMO_all$EDU3 %in% c(9:15)] <- 2
+DEMO_all$Edu_level[!is.na(DEMO_all$EDU2) & DEMO_all$EDU2 == 1] <- 3
+DEMO_all$Edu_level[!is.na(DEMO_all$EDU2) & DEMO_all$EDU2 %in% c(2, 3)] <- 2
+DEMO_all$Edu_level[!is.na(DEMO_all$EDU2) & DEMO_all$EDU2 %in% c(4, 5)] <- 1
+
+# Select only relevant columns
+DEMO_all <- DEMO_all[, c(1:4, 7:13)]
+
+# Merge demographic data with body measurement data by SEQN
+Demographic <- left_join(Body_data, DEMO_all, by = "SEQN")
+
+# Create an indicator variable 'SO' based on gender and ASMI thresholds
+Demographic$SO <- ifelse(Demographic$Sex == 1 & Demographic$ASMI < 7.0, 1,
+                         ifelse(Demographic$Sex == 2 & Demographic$ASMI < 5.4, 1, 0))
+
+# Select final columns for output
+Demographic <- Demographic[, c("SEQN", "SO", "Weight", "Height", "BMI","Age", "Sex", "RACE")]
+
+```
+
+```{r Data combination}
+AllData <- Demographic
+write.csv(AllData,file = "Data_Required_for_Model/Demographic.csv",row.names = FALSE)
+```
+
